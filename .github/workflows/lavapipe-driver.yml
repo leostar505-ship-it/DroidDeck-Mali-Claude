@@ -1,0 +1,60 @@
+name: Build lavapipe driver zip
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ mali-experiments ]
+    paths:
+      - '.github/workflows/lavapipe-driver.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y patchelf unzip
+
+      - name: Download Arch Linux ARM packages
+        run: |
+          set -euo pipefail
+          mirror=https://de3.mirror.archlinuxarm.org/aarch64/extra
+          listing=$(curl -fsSL "$mirror/")
+          swrast=$(grep -oE 'vulkan-swrast-[^"]+-aarch64\.pkg\.tar\.xz' <<<"$listing" | grep -v '\.sig' | sort -u | tail -1)
+          llvm=$(grep -oE 'llvm-libs-[^"]+-aarch64\.pkg\.tar\.xz' <<<"$listing" | grep -v '\.sig' | sort -u | tail -1)
+          echo "swrast=$swrast llvm=$llvm"
+          mkdir -p work/swrast work/llvm
+          curl -fsSL -o work/swrast.pkg "$mirror/$swrast"
+          curl -fsSL -o work/llvm.pkg "$mirror/$llvm"
+          tar -xJf work/swrast.pkg -C work/swrast
+          tar -xJf work/llvm.pkg -C work/llvm
+          echo "swrast_name=$swrast" >> "$GITHUB_ENV"
+
+      - name: Package the driver
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp work/swrast/usr/lib/libvulkan_lvp.so out/
+          cp "$(readlink -f work/llvm/usr/lib/libLLVM.so)" out/
+          llvm_lib=$(readelf -d out/libvulkan_lvp.so | sed -n 's/.*NEEDED.*\[\(libLLVM\.so\.[0-9.]*\)\].*/\1/p' | head -1)
+          mv out/libLLVM.so.* "out/$llvm_lib"
+          patchelf --set-rpath '$ORIGIN' out/libvulkan_lvp.so
+          version=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' <<<"$swrast_name" | head -1)
+          printf '{\n  "schemaVersion": 1,\n  "kind": "linux-vulkan-icd",\n  "name": "Lavapipe %s (CPU)",\n  "driverVersion": "%s",\n  "libc": "glibc",\n  "minGlibc": "2.43"\n}\n' "$version" "$version" > out/meta.json
+          (cd out && zip -9 "../Lavapipe-$version-Linux.zip" meta.json libvulkan_lvp.so "$llvm_lib")
+          ls -la "Lavapipe-$version-Linux.zip"
+          echo "version=$version" >> "$GITHUB_ENV"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="lavapipe-$version"
+          gh release delete "$tag" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$tag" "Lavapipe-$version-Linux.zip" -R "$GITHUB_REPOSITORY" \
+            --title "Lavapipe $version (CPU Vulkan driver)" \
+            --notes "Import in DroidDeck: Drivers, Import .zip."
