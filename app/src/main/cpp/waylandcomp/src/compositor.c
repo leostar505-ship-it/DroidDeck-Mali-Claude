@@ -32,6 +32,9 @@
 #include <errno.h>
 #include <poll.h>
 #include <sys/timerfd.h>
+#include <sys/mman.h>
+#include <linux/dma-buf.h>
+#include <sys/ioctl.h>
 #include <sys/syscall.h>
 #include <sys/sysmacros.h>
 #include <android/log.h>
@@ -773,6 +776,32 @@ extern void droiddeck_on_game_frame(void);
  * ("" when /proc gave none) - the app arms its CPU affinity on it (X11 does that from window events). */
 extern void droiddeck_on_game_program(int pid, const char *program);
 
+/* CPU fallback for a dma-buf the GPU driver cannot import (Mali has no VK_EXT_external_memory_dma_buf):
+ * map it, copy the pixels into the surface's shm image. Slow but it shows the picture. */
+static int g_stat_dmabuf_cpu, g_stat_dmabuf_cpu_fail;
+static int dmabuf_cpu_copy(struct surface *s, struct dmabuf_buffer *b) {
+    if (b->n_planes < 1 || b->fd[0] < 0 || b->width <= 0 || b->height <= 0) return 0;
+    size_t len = (size_t)b->offset[0] + (size_t)b->stride[0] * (size_t)b->height;
+    void *m = mmap(NULL, len, PROT_READ, MAP_SHARED, b->fd[0], 0);
+    if (m == MAP_FAILED) {
+        if (g_stat_dmabuf_cpu_fail++ < 3) WLOGE("dmabuf mmap failed errno=%d len=%zu", errno, len);
+        return 0;
+    }
+    struct dma_buf_sync sy = {.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ};
+    ioctl(b->fd[0], DMA_BUF_IOCTL_SYNC, &sy);
+    if (s->shm_img && (vkp_image_width(s->shm_img) != b->width || vkp_image_height(s->shm_img) != b->height)) {
+        vkp_image_destroy(s->shm_img);
+        s->shm_img = NULL;
+    }
+    if (!s->shm_img) s->shm_img = vkp_image_create_shm(b->width, b->height);
+    if (s->shm_img) vkp_image_upload_shm(s->shm_img, (const uint8_t *)m + b->offset[0], b->stride[0]);
+    sy.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
+    ioctl(b->fd[0], DMA_BUF_IOCTL_SYNC, &sy);
+    munmap(m, len);
+    if (s->shm_img && g_stat_dmabuf_cpu++ == 0) WLOGE("dmabuf CPU-copy fallback active (%dx%d)", b->width, b->height);
+    return s->shm_img != NULL;
+}
+
 static void take_dmabuf(struct surface *s, struct dmabuf_buffer *b, struct wl_resource *buffer) {
     if (s->dmabuf != buffer || s->dmabuf_buf != b) {
         drop_dmabuf(s, 1);
@@ -792,7 +821,12 @@ static void take_dmabuf(struct surface *s, struct dmabuf_buffer *b, struct wl_re
                   b->format, (unsigned long long)b->modifier);
         }
     }
-    if (s->shm_img) { vkp_image_destroy(s->shm_img); s->shm_img = NULL; }
+    int cpu_ok = 0;
+    if (b->img || ahb_swapchain_has_ahb(b)) {
+        if (s->shm_img) { vkp_image_destroy(s->shm_img); s->shm_img = NULL; }
+    } else {
+        cpu_ok = dmabuf_cpu_copy(s, b);
+    }
     /* The size of the frames a window commits, when it changes after the first announcement: the
      * program rebuilt its swapchain. It earns a line of its own, because a game whose swapchain
      * came back smaller than it was is exactly what a picture suddenly filling one corner of the
@@ -808,7 +842,7 @@ static void take_dmabuf(struct surface *s, struct dmabuf_buffer *b, struct wl_re
     s->buf_w = b->width;
     s->buf_h = b->height;
     s->buf_alpha = (b->format & 0xff) == 'A';
-    s->has_content = b->img != NULL;
+    s->has_content = b->img != NULL || cpu_ok;
     g_stat_dmabuf++;
     const int announced_now = !s->announced_vulkan;
     if (!s->announced_vulkan) {
