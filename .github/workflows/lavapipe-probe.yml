@@ -1,0 +1,36 @@
+name: Probe lavapipe source
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ mali-experiments ]
+    paths:
+      - '.github/workflows/lavapipe-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Fetch Mesa source
+        run: |
+          set -euo pipefail
+          curl -fsSL -o mesa.tar.xz https://archive.mesa3d.org/mesa-26.2.4.tar.xz
+          tar -xJf mesa.tar.xz
+          mv mesa-26.2.4 mesa
+
+      - name: Files that mention dma-buf allocation
+        run: |
+          cd mesa
+          grep -rIl -i "udmabuf\|dma_heap" src | sort
+
+      - name: Context around udmabuf
+        run: |
+          cd mesa
+          for f in $(grep -rIl "udmabuf" src/gallium src/gallium/frontends/lavapipe 2>/dev/null | sort -u); do
+            echo "=================== $f"
+            grep -n -B25 -A40 "udmabuf" "$f" | head -400
+          done
