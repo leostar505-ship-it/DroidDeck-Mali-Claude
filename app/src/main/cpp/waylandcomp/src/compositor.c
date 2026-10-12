@@ -780,6 +780,8 @@ extern void droiddeck_on_game_program(int pid, const char *program);
  * map it, copy the pixels into the surface's shm image. Slow but it shows the picture. */
 static int g_stat_dmabuf_cpu, g_stat_dmabuf_cpu_fail;
 static int dmabuf_cpu_copy(struct surface *s, struct dmabuf_buffer *b) {
+    static int g_called;
+    if (g_called++ < 2) WLOGE("cpu-copy build 66530e9+: called planes=%d fd=%d %dx%d stride=%u off=%u", b->n_planes, b->fd[0], b->width, b->height, (unsigned)b->stride[0], (unsigned)b->offset[0]);
     if (b->n_planes < 1 || b->fd[0] < 0 || b->width <= 0 || b->height <= 0) return 0;
     size_t len = (size_t)b->offset[0] + (size_t)b->stride[0] * (size_t)b->height;
     void *m = mmap(NULL, len, PROT_READ, MAP_SHARED, b->fd[0], 0);
@@ -794,6 +796,7 @@ static int dmabuf_cpu_copy(struct surface *s, struct dmabuf_buffer *b) {
         s->shm_img = NULL;
     }
     if (!s->shm_img) s->shm_img = vkp_image_create_shm(b->width, b->height);
+    if (!s->shm_img) WLOGE("cpu-copy: vkp_image_create_shm(%d,%d) failed", b->width, b->height);
     if (s->shm_img) vkp_image_upload_shm(s->shm_img, (const uint8_t *)m + b->offset[0], b->stride[0]);
     sy.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
     ioctl(b->fd[0], DMA_BUF_IOCTL_SYNC, &sy);
