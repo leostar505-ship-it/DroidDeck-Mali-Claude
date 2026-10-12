@@ -135,8 +135,8 @@ if [ -n "${BL_VK_DRIVER:-}" ]; then
     echo "== vulkan driver: imported $bl_icd_lib (via $BL_VK_DRIVER)"
     for bl_llvm in "$(dirname "$bl_icd_lib")"/libLLVM.so*; do
       if [ -e "$bl_llvm" ]; then
-        export LIBGL_ALWAYS_SOFTWARE=1 LIBGL_KOPPER_DISABLE=true
-        echo "== software Vulkan driver (lavapipe): LIBGL_ALWAYS_SOFTWARE=1 LIBGL_KOPPER_DISABLE=true"
+        export LIBGL_ALWAYS_SOFTWARE=1 LIBGL_KOPPER_DISABLE=true DISABLE_GAMESCOPE_WSI=1
+        echo "== software Vulkan driver (lavapipe): LIBGL_ALWAYS_SOFTWARE=1 LIBGL_KOPPER_DISABLE=true DISABLE_GAMESCOPE_WSI=1"
       fi
       break
     done
