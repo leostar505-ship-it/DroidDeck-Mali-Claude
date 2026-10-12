@@ -1,0 +1,37 @@
+name: Build lavapipe with dma-heap
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ mali-experiments ]
+    paths:
+      - 'tools/lavapipe/**'
+      - '.github/workflows/lavapipe-dmaheap.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build in Arch Linux ARM
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/work" -w /work menci/archlinuxarm:base-devel bash tools/lavapipe/build-in-arch.sh
+          sudo chown -R "$(id -u):$(id -g)" .
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(cat out/version)
+          tag="lavapipe-dmaheap-$version"
+          gh release delete "$tag" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$tag" "out/Lavapipe-$version-dmaheap-Linux.zip" -R "$GITHUB_REPOSITORY" \
+            --title "Lavapipe $version dma-heap (CPU Vulkan driver)" \
+            --notes "Lavapipe patched to allocate dma-buf memory from /dev/dma_heap/system when /dev/udmabuf is unavailable. Import under Components, GPU drivers, Runtime driver."
