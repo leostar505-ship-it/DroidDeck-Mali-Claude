@@ -1,0 +1,106 @@
+name: Build lavapipe against LLVM 22
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ mali-experiments ]
+    paths:
+      - 'tools/lavapipe/**'
+      - '.github/workflows/lavapipe-llvm22.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    env:
+      MESA_VERSION: 26.2.4
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add the LLVM 22 package source
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq curl gnupg ca-certificates
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm22.list
+          sudo apt-get update -qq
+
+      - name: Install build dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get install -y -qq llvm-22-dev libllvm22 clang-22 \
+            build-essential ninja-build python3-pip python3-mako python3-yaml python3-packaging python3-setuptools \
+            pkg-config bison flex glslang-tools spirv-tools libdrm-dev libx11-dev libxext-dev libxfixes-dev \
+            libxcb1-dev libxcb-dri3-dev libxcb-present-dev libxcb-randr0-dev libxcb-sync-dev libxcb-xfixes0-dev libxcb-shm0-dev \
+            libx11-xcb-dev libxshmfence-dev libxrandr-dev libxxf86vm-dev libwayland-dev wayland-protocols libwayland-egl-backend-dev \
+            libexpat1-dev zlib1g-dev libzstd-dev libxml2-dev libffi-dev libelf-dev patchelf zip xz-utils
+          sudo pip3 install --break-system-packages meson
+          llvm-config-22 --version
+          llvm-config-22 --shared-mode
+          ls -la "$(llvm-config-22 --libdir)" | grep -i "libLLVM" || true
+
+      - name: Fetch and patch Mesa
+        run: |
+          set -euxo pipefail
+          mkdir -p build-mesa && cd build-mesa
+          curl -fsSL -o mesa.tar.xz "https://archive.mesa3d.org/mesa-${MESA_VERSION}.tar.xz"
+          tar -xJf mesa.tar.xz
+          python3 "$GITHUB_WORKSPACE/tools/lavapipe/patch-mesa.py" "mesa-${MESA_VERSION}"
+
+      - name: Configure
+        run: |
+          set -euxo pipefail
+          cd build-mesa
+          meson setup build "mesa-${MESA_VERSION}" \
+            -Dbuildtype=release \
+            -Db_ndebug=true \
+            -Dplatforms=x11,wayland \
+            -Dgallium-drivers=llvmpipe \
+            -Dvulkan-drivers=swrast \
+            -Dllvm=enabled \
+            -Dshared-llvm=enabled \
+            -Dglx=disabled \
+            -Degl=disabled \
+            -Dgbm=disabled \
+            -Dopengl=false \
+            -Dvalgrind=disabled \
+            -Dlibunwind=disabled \
+            -Dlmsensors=disabled
+        env:
+          LLVM_CONFIG: llvm-config-22
+          PATH: /usr/lib/llvm-22/bin:/usr/local/bin:/usr/bin:/bin
+
+      - name: Compile
+        run: ninja -C build-mesa/build
+
+      - name: Package with no bundled LLVM
+        run: |
+          set -euxo pipefail
+          lib=$(find build-mesa/build -name libvulkan_lvp.so | head -1)
+          test -n "$lib"
+          mkdir -p out/pkg
+          cp "$lib" out/pkg/libvulkan_lvp.so
+          patchelf --remove-rpath out/pkg/libvulkan_lvp.so
+          readelf -d out/pkg/libvulkan_lvp.so | grep -E "NEEDED|RUNPATH|RPATH|SONAME"
+          llvm_need=$(readelf -d out/pkg/libvulkan_lvp.so | sed -n 's/.*NEEDED.*\[\(libLLVM[^]]*\)\].*/\1/p')
+          echo "llvm needed: $llvm_need"
+          test "$llvm_need" = "libLLVM.so.22.1"
+          readelf -V out/pkg/libvulkan_lvp.so | grep -oE "GLIBC_[0-9.]+|GLIBCXX_[0-9.]+|CXXABI_[0-9.]+|LLVM_[0-9.]+" | sort -uV
+          printf '{\n  "schemaVersion": 1,\n  "kind": "linux-vulkan-icd",\n  "name": "Lavapipe %s LLVM 22 (CPU)",\n  "driverVersion": "%s",\n  "libc": "glibc",\n  "minGlibc": "2.39"\n}\n' "$MESA_VERSION" "$MESA_VERSION" > out/pkg/meta.json
+          (cd out/pkg && zip -9 "../Lavapipe-${MESA_VERSION}-llvm22-Linux.zip" meta.json libvulkan_lvp.so)
+          ls -la out
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          tag="lavapipe-llvm22-${MESA_VERSION}"
+          gh release delete "$tag" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$tag" "out/Lavapipe-${MESA_VERSION}-llvm22-Linux.zip" -R "$GITHUB_REPOSITORY" \
+            --title "Lavapipe ${MESA_VERSION} LLVM 22 (CPU Vulkan driver, no bundled LLVM)" \
+            --notes "Built against LLVM 22 so it uses the runtime's own libLLVM.so.22.1. Import under Components, GPU drivers, Runtime driver."
