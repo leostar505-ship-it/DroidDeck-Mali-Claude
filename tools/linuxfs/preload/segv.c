@@ -37,11 +37,27 @@ static void dump_maps(void) {
   }
 }
 
+#if defined(__aarch64__)
+#include <ucontext.h>
+static void dump_regs(void *uc) {
+  ucontext_t *u = uc;
+  char line[160];
+  for (int i = 0; i < 31; i += 4) {
+    int n = snprintf(line, sizeof line, "== regs x%d=%llx x%d=%llx x%d=%llx x%d=%llx\n", i, (unsigned long long)u->uc_mcontext.regs[i], i + 1, (unsigned long long)u->uc_mcontext.regs[i + 1], i + 2 < 31 ? i + 2 : 30, (unsigned long long)u->uc_mcontext.regs[i + 2 < 31 ? i + 2 : 30], i + 3 < 31 ? i + 3 : 30, (unsigned long long)u->uc_mcontext.regs[i + 3 < 31 ? i + 3 : 30]);
+    if (n > 0 && write(2, line, (size_t)n) < 0) return;
+  }
+  int n = snprintf(line, sizeof line, "== regs pc=%llx sp=%llx\n", (unsigned long long)u->uc_mcontext.pc, (unsigned long long)u->uc_mcontext.sp);
+  if (n > 0 && write(2, line, (size_t)n) < 0) return;
+}
+#else
+static void dump_regs(void *uc) { (void)uc; }
+#endif
+
 static void segv_handler(int sig, siginfo_t *si, void *uc) {
-  (void)uc;
   char head[200];
   int n = snprintf(head, sizeof head, "\n== bl-segv: signal %d code %d addr %p pid %d\n", sig, si->si_code, si->si_addr, getpid());
   if (n > 0 && write(2, head, (size_t)n) < 0) _exit(139);
+  dump_regs(uc);
   void *frames[64];
   int count = backtrace(frames, 64);
   backtrace_symbols_fd(frames, count, 2);
