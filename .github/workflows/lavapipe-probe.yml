@@ -27,6 +27,26 @@ jobs:
           cd mesa
           grep -rIl -i "udmabuf\|dma_heap" src | sort
 
+      - name: Memory fd allocation and free paths
+        run: |
+          cd mesa
+          f=src/gallium/drivers/llvmpipe/lp_texture.c
+          start=$(grep -n "llvmpipe_dmabuf_alloc\|LLVMPIPE_MEMORY_FD_TYPE_DMA_BUF" $f | head -1 | cut -d: -f1)
+          echo "first match at $start"
+          sed -n "1370,1440p" $f
+          echo "-------------------- allocate and free"
+          sed -n "1500,1640p" $f
+
+      - name: Lavapipe device and format code
+        run: |
+          cd mesa
+          grep -n -i "udmabuf\|dma_heap\|dmabuf\|DMA_BUF" src/gallium/frontends/lavapipe/lvp_device.c src/gallium/frontends/lavapipe/lvp_formats.c src/gallium/drivers/llvmpipe/lp_screen.h | head -60
+
+      - name: Kernel headers for dma-heap
+        run: |
+          ls /usr/include/linux/dma-heap.h /usr/include/linux/udmabuf.h
+          cat /usr/include/linux/dma-heap.h
+
       - name: Context around udmabuf
         run: |
           cd mesa
