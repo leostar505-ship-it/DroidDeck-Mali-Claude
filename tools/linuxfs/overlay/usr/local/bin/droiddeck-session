@@ -133,6 +133,13 @@ if [ -n "${BL_VK_DRIVER:-}" ]; then
     # Loaders older than 1.3.207 only know the old name; both are harmless together.
     export VK_ICD_FILENAMES="$BL_VK_DRIVER"
     echo "== vulkan driver: imported $bl_icd_lib (via $BL_VK_DRIVER)"
+    for bl_llvm in "$(dirname "$bl_icd_lib")"/libLLVM.so*; do
+      if [ -e "$bl_llvm" ]; then
+        export LIBGL_ALWAYS_SOFTWARE=1
+        echo "== software Vulkan driver (lavapipe): LIBGL_ALWAYS_SOFTWARE=1"
+      fi
+      break
+    done
   else
     echo "== vulkan driver: IGNORING $BL_VK_DRIVER (manifest or ${bl_icd_lib:-library} unreadable); using the runtime's own"
   fi
