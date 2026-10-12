@@ -38,9 +38,8 @@ jobs:
           set -euo pipefail
           mkdir -p out
           cp work/swrast/usr/lib/libvulkan_lvp.so out/
-          cp "$(readlink -f work/llvm/usr/lib/libLLVM.so)" out/
           llvm_lib=$(readelf -d out/libvulkan_lvp.so | sed -n 's/.*NEEDED.*\[\(libLLVM\.so\.[0-9.]*\)\].*/\1/p' | head -1)
-          mv out/libLLVM.so.* "out/$llvm_lib"
+          cp "$(readlink -f work/llvm/usr/lib/libLLVM.so)" "out/$llvm_lib"
           patchelf --set-rpath '$ORIGIN' out/libvulkan_lvp.so
           version=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' <<<"$swrast_name" | head -1)
           printf '{\n  "schemaVersion": 1,\n  "kind": "linux-vulkan-icd",\n  "name": "Lavapipe %s (CPU)",\n  "driverVersion": "%s",\n  "libc": "glibc",\n  "minGlibc": "2.43"\n}\n' "$version" "$version" > out/meta.json
