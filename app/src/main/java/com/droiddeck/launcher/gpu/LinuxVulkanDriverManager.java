@@ -141,12 +141,16 @@ public class LinuxVulkanDriverManager {
                     // Flatten: only the base name matters, and it also defeats zip-slip paths.
                     String base = new File(entry.getName()).getName();
                     if (base.isEmpty()) continue;
-                    if (base.startsWith("libvulkan_freedreno") && base.endsWith(".so")) {
-                        if (soName != null) Log.w(TAG, "zip has several libvulkan_freedreno*.so; using the first (" + soName + ")");
+                    boolean driverLib = base.endsWith(".so")
+                            && (base.startsWith("libvulkan_freedreno") || base.equals("libvulkan_lvp.so"));
+                    if (driverLib) {
+                        if (soName != null) Log.w(TAG, "zip has several driver libraries; using the first (" + soName + ")");
                         else {
                             Files.copy(zis, new File(tmpDir, LIB_NAME).toPath(), StandardCopyOption.REPLACE_EXISTING);
                             soName = base;
                         }
+                    } else if (base.startsWith("lib") && base.contains(".so") && !base.equals(LIB_NAME)) {
+                        Files.copy(zis, new File(tmpDir, base).toPath(), StandardCopyOption.REPLACE_EXISTING);
                     } else if (base.equals(META_NAME)) {
                         try {
                             zipMeta = new JSONObject(new String(readAll(zis), StandardCharsets.UTF_8));
