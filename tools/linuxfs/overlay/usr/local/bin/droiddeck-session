@@ -141,7 +141,7 @@ if [ -n "${BL_VK_DRIVER:-}" ]; then
       break
     done
     if [ -n "$bl_soft" ]; then
-      export LIBGL_ALWAYS_SOFTWARE=1 LIBGL_KOPPER_DISABLE=true DISABLE_GAMESCOPE_WSI=1 BL_SEGV=1
+      export LIBGL_ALWAYS_SOFTWARE=1 LIBGL_KOPPER_DISABLE=true DISABLE_GAMESCOPE_WSI=1 BL_SEGV=1 BL_SOFT_VK=1
       echo "== software Vulkan driver (lavapipe): LIBGL_ALWAYS_SOFTWARE=1 LIBGL_KOPPER_DISABLE=true DISABLE_GAMESCOPE_WSI=1 BL_SEGV=1"
     fi
     unset bl_icd_dir bl_soft bl_llvm
@@ -874,6 +874,7 @@ BUSCONF
     _bl_ui=(-gamepadui)
     [ "${BL_STEAM_UI:-}" = desktop ] && _bl_ui=()
     _bl_cef=(-cef-force-gpu -cef-use-gl=angle -cef-use-angle=vulkan)
+    [ -n "${BL_SOFT_VK:-}" ] && _bl_cef=(-cef-disable-gpu)
     if [ "${BL_DESKTOP:-}" = 1 ] && [ "${BL_STEAM_UI:-}" = desktop ]; then
       # KDE uses QPainter/shm on Android. CEF's Vulkan buffers cannot be
       # presented there; its software path keeps the library and dialogs on KDE.
