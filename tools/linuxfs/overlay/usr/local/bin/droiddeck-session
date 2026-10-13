@@ -394,7 +394,7 @@ if [ -z "${BL_INSIDE:-}" ]; then
   # gamescope then offers HDR to its clients through the same wp_color_manager_v1 it binds on ours.
   [ "${BL_HDR:-0}" = 1 ] && args+=(--hdr-enabled)
   # Extra gamescope arguments for an experiment (--debug-focus, say), from Download/droiddeck-env.
-  [ -n "${BL_SOFT_VK:-}" ] && BL_GAMESCOPE_ARGS="${BL_GAMESCOPE_ARGS:-} --debug-layers --debug-focus --debug-events"
+  [ -n "${BL_SOFT_VK:-}" ] && BL_GAMESCOPE_ARGS="${BL_GAMESCOPE_ARGS:-} --debug-layers --debug-focus --debug-events --debug-hud"
   [ -n "${BL_GAMESCOPE_ARGS:-}" ] && read -r -a _bl_extra <<<"$BL_GAMESCOPE_ARGS" && args+=("${_bl_extra[@]}")
   # The performance overlay (Quick Access Menu → Performance → Overlay Level) is drawn by
   # mangoapp, which gamescope starts beside the client; the client sets the level by rewriting
