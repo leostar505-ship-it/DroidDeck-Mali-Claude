@@ -410,6 +410,13 @@ if [ -z "${BL_INSIDE:-}" ]; then
     args+=(--mangoapp)
     echo "== gamescope: mangoapp on ($(command -v mangoapp), config $MANGOHUD_CONFIGFILE)"
   fi
+  if [ -n "${BL_SOFT_VK:-}" ] && _bl_xw=$(command -v Xwayland 2>/dev/null); then
+    mkdir -p /tmp/bl-xw
+    printf '#!/bin/sh\necho "== xwayland: start $*" >&2\nexec %s "$@" -verbose 10 -logverbose 10\n' "$_bl_xw" > /tmp/bl-xw/Xwayland
+    chmod +x /tmp/bl-xw/Xwayland
+    export WLR_XWAYLAND=/tmp/bl-xw/Xwayland XWAYLAND_NO_GLAMOR=1
+    echo "== xwayland: verbose wrapper for $_bl_xw, glamor off"
+  fi
   export BL_INSIDE=1
   exec gamescope "${args[@]}" -- "$0" "$mode" "$@"
 fi
