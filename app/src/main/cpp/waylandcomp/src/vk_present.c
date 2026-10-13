@@ -393,8 +393,10 @@ static int has_ext(VkExtensionProperties *e, uint32_t n, const char *name) {
 }
 
 /* Instance + device + command objects. Doesn't need the window. */
+static int g_retried_system;
 static int dev_init(void) {
     if (g_dev_state != 0) return g_dev_state == 1 ? 0 : -1;
+retry_system:
 
     /* Load Turnip (adrenotools) and its entry points - NOT the system driver. */
     if (vk_loader_open(g_driver_path, g_library_name, g_native_lib_dir) != 0) {
@@ -440,6 +442,14 @@ static int dev_init(void) {
 
     uint32_t npd = 0;
     g_vk.EnumeratePhysicalDevices(g_inst, &npd, NULL);
+    if (!npd && g_driver_path && !g_retried_system) {
+        LOGE("present: no physical devices with the bundled driver; retrying with the system Vulkan driver");
+        g_retried_system = 1;
+        g_inst = VK_NULL_HANDLE;
+        free(g_library_name); g_library_name = NULL;
+        vk_loader_force_system();
+        goto retry_system;
+    }
     if (!npd) { LOGE("present: no physical devices"); g_dev_state = -1; return -1; }
     VkPhysicalDevice pds[8]; if (npd > 8) npd = 8;
     g_vk.EnumeratePhysicalDevices(g_inst, &npd, pds);

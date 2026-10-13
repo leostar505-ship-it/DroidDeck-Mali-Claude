@@ -14,8 +14,12 @@ struct vk_api g_vk;
 static void *g_handle;
 static PFN_vkGetInstanceProcAddr g_gip;
 
+static int g_force_system;
+void vk_loader_force_system(void) { g_force_system = 1; g_handle = NULL; }
+
 int vk_loader_open(const char *driver_path, const char *library_name,
                    const char *native_lib_dir) {
+    if (g_force_system) driver_path = NULL;
     if (driver_path && library_name && native_lib_dir) {
         char *tmpdir = NULL;
         if (asprintf(&tmpdir, "%stemp", driver_path) < 0) tmpdir = NULL;

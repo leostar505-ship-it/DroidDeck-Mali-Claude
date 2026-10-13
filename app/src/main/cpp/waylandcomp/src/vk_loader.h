@@ -49,6 +49,7 @@ extern struct vk_api g_vk;
 
 /* Open Turnip via adrenotools (falls back to system libvulkan if any arg is NULL)
  * and load global entry points. Returns 0 on success. */
+void vk_loader_force_system(void);
 int vk_loader_open(const char *driver_path, const char *library_name,
                    const char *native_lib_dir);
 void vk_loader_load_instance(VkInstance instance);
