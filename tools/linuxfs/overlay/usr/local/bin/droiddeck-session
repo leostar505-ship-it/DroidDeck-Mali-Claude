@@ -212,9 +212,9 @@ def cdp(ws, mid, method, params=None, timeout=20):
         if m.get("id") == mid:
             return m
     return {"error": "timeout"}
-time.sleep(25)
+time.sleep(10)
 shots = 0
-for rnd in range(40):
+for rnd in range(80):
     log("round", rnd, time.strftime("%H:%M:%S"))
     try:
         port = int(os.environ.get("BL_CDP_PORT", "0"))
@@ -229,7 +229,7 @@ for rnd in range(40):
             try:
                 r = cdp(ws, 1, "Runtime.evaluate", {"expression": "JSON.stringify({vis:document.visibilityState,w:innerWidth,h:innerHeight,dpr:devicePixelRatio,text:(document.body&&document.body.innerText||'').slice(0,300),n:document.getElementsByTagName('*').length})", "returnByValue": True})
                 log("page", repr(title), json.dumps(r.get("result", r))[:600])
-                if rnd % 3 == 0 and shots < 12:
+                if rnd >= 1 and shots < 14:
                     r = cdp(ws, 2, "Page.captureScreenshot", {"format": "jpeg", "quality": 40}, 30)
                     data = (r.get("result") or {}).get("data")
                     if data:
@@ -247,13 +247,13 @@ for rnd in range(40):
                 ws.close()
     except Exception as e:
         log("cdp round failed", repr(e))
-    if rnd % 4 == 0:
+    if rnd % 2 == 1:
         sh("ps -eo pid,ppid,stat,etime,pcpu,rss,args | grep -E 'steam|gamescope|Xwayland|webhelper' | grep -v grep | cut -c1-260")
         sh("DISPLAY=:0 xwininfo -root -tree 2>&1 | head -50")
         sh("DISPLAY=:1 xwininfo -root -tree 2>&1 | head -30")
         sh("DISPLAY=:0 xprop -root 2>&1 | head -40")
         sh("for p in $(pgrep -f 'gamescope|steamwebhelper' | head -6); do echo pid $p; ls -l /proc/$p/fd 2>/dev/null | grep -E 'dmabuf|dma|drm|memfd|shm' | head -8; done")
-    time.sleep(15)
+    time.sleep(8)
 PYEOF
   python3 /tmp/bl-diag.py 2>&1 &
 }
