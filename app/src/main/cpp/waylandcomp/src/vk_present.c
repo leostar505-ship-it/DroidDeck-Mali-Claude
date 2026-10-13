@@ -1045,7 +1045,8 @@ static int shm_sampled(void) {
 }
 
 struct vkp_image *vkp_image_create_shm(int w, int h) {
-    if (w <= 0 || h <= 0 || dev_init() != 0) return NULL;
+    if (w <= 0 || h <= 0) return NULL;
+    if (dev_init() != 0) { LOGE("create_shm: dev_init failed"); return NULL; }
 
     struct vkp_image *img = calloc(1, sizeof(*img));
     if (!img) return NULL;
@@ -1060,7 +1061,7 @@ struct vkp_image *vkp_image_create_shm(int w, int h) {
         .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | (img->sampled ? VK_IMAGE_USAGE_SAMPLED_BIT : 0),
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED};
-    if (g_vk.CreateImage(g_dev, &ici, NULL, &img->image) != VK_SUCCESS) { free(img); return NULL; }
+    { VkResult cr = g_vk.CreateImage(g_dev, &ici, NULL, &img->image); if (cr != VK_SUCCESS) { LOGE("create_shm: CreateImage %dx%d sampled=%d failed r=%d", w, h, img->sampled, (int)cr); free(img); return NULL; } }
 
     VkMemoryRequirements req;
     g_vk.GetImageMemoryRequirements(g_dev, img->image, &req);
@@ -1068,7 +1069,9 @@ struct vkp_image *vkp_image_create_shm(int w, int h) {
                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     VkMemoryAllocateInfo mai = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
                                 .allocationSize = req.size, .memoryTypeIndex = (uint32_t)idx};
-    if (idx < 0 || g_vk.AllocateMemory(g_dev, &mai, NULL, &img->mem) != VK_SUCCESS) {
+    VkResult ar = idx < 0 ? VK_ERROR_UNKNOWN : g_vk.AllocateMemory(g_dev, &mai, NULL, &img->mem);
+    if (ar != VK_SUCCESS) {
+        LOGE("create_shm: memory idx=%d bits=0x%x size=%llu r=%d", idx, (unsigned)req.memoryTypeBits, (unsigned long long)req.size, (int)ar);
         g_vk.DestroyImage(g_dev, img->image, NULL); free(img); return NULL;
     }
     g_vk.BindImageMemory(g_dev, img->image, img->mem, 0);
@@ -1079,6 +1082,7 @@ struct vkp_image *vkp_image_create_shm(int w, int h) {
     img->offset = lay.offset;
     img->row_pitch = lay.rowPitch;
     if (g_vk.MapMemory(g_dev, img->mem, 0, req.size, 0, &img->map) != VK_SUCCESS) {
+        LOGE("create_shm: MapMemory failed");
         vkp_image_destroy(img); return NULL;
     }
     return img;
