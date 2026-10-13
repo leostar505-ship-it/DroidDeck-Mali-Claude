@@ -141,7 +141,7 @@ if [ -n "${BL_VK_DRIVER:-}" ]; then
       break
     done
     if [ -n "$bl_soft" ]; then
-      export LIBGL_ALWAYS_SOFTWARE=1 LIBGL_KOPPER_DISABLE=true DISABLE_GAMESCOPE_WSI=1 BL_SEGV=1 BL_SOFT_VK=1
+      export LIBGL_ALWAYS_SOFTWARE=1 LIBGL_KOPPER_DISABLE=true DISABLE_GAMESCOPE_WSI=1 BL_SEGV=1 BL_SOFT_VK=1 WAYLAND_DEBUG=1 VK_LOADER_DEBUG=error,warn,driver LIBGL_DEBUG=verbose EGL_LOG_LEVEL=debug MESA_DEBUG=1 MESA_LOG_LEVEL=debug LVP_DEBUG= ZINK_DEBUG= LP_DEBUG= XKB_LOG_LEVEL=debug
       echo "== software Vulkan driver (lavapipe): LIBGL_ALWAYS_SOFTWARE=1 LIBGL_KOPPER_DISABLE=true DISABLE_GAMESCOPE_WSI=1 BL_SEGV=1"
     fi
     unset bl_icd_dir bl_soft bl_llvm
@@ -168,6 +168,84 @@ start_agent() {
   [ -n "${BL_LAUNCH_DIR:-}" ] && [ -x /usr/local/bin/droiddeck-agent ] || return 0
   mkdir -p "$BL_LAUNCH_DIR/agent"
   /usr/local/bin/droiddeck-agent "$@" 2>&1 &
+}
+
+bl_diag_start() {
+  [ -n "${BL_SOFT_VK:-}" ] || return 0
+  [ -z "${BL_DIAG_STARTED:-}" ] || return 0
+  export BL_DIAG_STARTED=1
+  cat > /tmp/bl-diag.py <<'PYEOF'
+import base64, importlib.machinery, importlib.util, json, os, subprocess, sys, time, urllib.request
+out = os.environ.get("BL_DEBUG_DIR", "/tmp") + "/steam"
+os.makedirs(out, exist_ok=True)
+def log(*a):
+    print("== diag:", *a, flush=True)
+try:
+    loader = importlib.machinery.SourceFileLoader("dd_agent", "/usr/local/bin/droiddeck-agent")
+    spec = importlib.util.spec_from_loader("dd_agent", loader)
+    agent = importlib.util.module_from_spec(spec)
+    loader.exec_module(agent)
+except Exception as e:
+    log("cannot load agent module:", repr(e)); agent = None
+def sh(cmd, limit=3000):
+    try:
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=20)
+        log("$", cmd); 
+        for line in (r.stdout + r.stderr).splitlines()[:60]:
+            print("==   " + line[:300], flush=True)
+    except Exception as e:
+        log("cmd failed", cmd, repr(e))
+def cdp(ws, mid, method, params=None, timeout=20):
+    ws.send(json.dumps({"id": mid, "method": method, "params": params or {}}))
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        m = json.loads(ws.recv())
+        if m.get("id") == mid:
+            return m
+    return {"error": "timeout"}
+time.sleep(25)
+shots = 0
+for rnd in range(40):
+    log("round", rnd, time.strftime("%H:%M:%S"))
+    try:
+        port = int(os.environ.get("BL_CDP_PORT", "0"))
+        targets = json.load(urllib.request.urlopen("http://127.0.0.1:%d/json" % port, timeout=5))
+        for t in targets:
+            log("target", t.get("type"), repr(t.get("title")), (t.get("url") or "")[:120])
+        for t in targets:
+            if not t.get("webSocketDebuggerUrl") or t.get("type") != "page":
+                continue
+            title = t.get("title") or "?"
+            ws = agent.WebSocket(t["webSocketDebuggerUrl"], 20)
+            try:
+                r = cdp(ws, 1, "Runtime.evaluate", {"expression": "JSON.stringify({vis:document.visibilityState,w:innerWidth,h:innerHeight,dpr:devicePixelRatio,text:(document.body&&document.body.innerText||'').slice(0,300),n:document.getElementsByTagName('*').length})", "returnByValue": True})
+                log("page", repr(title), json.dumps(r.get("result", r))[:600])
+                if rnd % 3 == 0 and shots < 12:
+                    r = cdp(ws, 2, "Page.captureScreenshot", {"format": "jpeg", "quality": 40}, 30)
+                    data = (r.get("result") or {}).get("data")
+                    if data:
+                        raw = base64.b64decode(data)
+                        fn = "%s/diag-shot-%02d.jpg" % (out, shots)
+                        open(fn, "wb").write(raw)
+                        shots += 1
+                        log("screenshot", fn, len(raw), "bytes (a blank page is a few KB)")
+                        if len(raw) < 70000 and shots <= 5:
+                            print("== diag-jpeg-base64 " + title.replace(" ", "_") + " " + data, flush=True)
+                    else:
+                        log("screenshot failed", json.dumps(r)[:300])
+            finally:
+                ws.close()
+    except Exception as e:
+        log("cdp round failed", repr(e))
+    if rnd % 4 == 0:
+        sh("ps -eo pid,ppid,stat,etime,pcpu,rss,args | grep -E 'steam|gamescope|Xwayland|webhelper' | grep -v grep | cut -c1-260")
+        sh("DISPLAY=:0 xwininfo -root -tree 2>&1 | head -50")
+        sh("DISPLAY=:1 xwininfo -root -tree 2>&1 | head -30")
+        sh("DISPLAY=:0 xprop -root 2>&1 | head -40")
+        sh("for p in $(pgrep -f 'gamescope|steamwebhelper' | head -6); do echo pid $p; ls -l /proc/$p/fd 2>/dev/null | grep -E 'dmabuf|dma|drm|memfd|shm' | head -8; done")
+    time.sleep(15)
+PYEOF
+  python3 /tmp/bl-diag.py 2>&1 &
 }
 nap() {
   [ -n "${bl_nap_fd:-}" ] || exec {bl_nap_fd}<> <(:)
@@ -306,6 +384,7 @@ if [ -z "${BL_INSIDE:-}" ]; then
   # gamescope then offers HDR to its clients through the same wp_color_manager_v1 it binds on ours.
   [ "${BL_HDR:-0}" = 1 ] && args+=(--hdr-enabled)
   # Extra gamescope arguments for an experiment (--debug-focus, say), from Download/droiddeck-env.
+  [ -n "${BL_SOFT_VK:-}" ] && BL_GAMESCOPE_ARGS="${BL_GAMESCOPE_ARGS:-} --debug-layers --debug-focus --debug-events"
   [ -n "${BL_GAMESCOPE_ARGS:-}" ] && read -r -a _bl_extra <<<"$BL_GAMESCOPE_ARGS" && args+=("${_bl_extra[@]}")
   # The performance overlay (Quick Access Menu → Performance → Overlay Level) is drawn by
   # mangoapp, which gamescope starts beside the client; the client sets the level by rewriting
@@ -868,6 +947,7 @@ BUSCONF
     # The agent bridge drives the client through it (droiddeck-agent's cdp requests).
     [ -n "${BL_LAUNCH_DIR:-}" ] && mkdir -p "$BL_LAUNCH_DIR/agent" && echo "$BL_CDP_PORT" > "$BL_LAUNCH_DIR/agent/cdp-port"
     droiddeck-steam-compat "$steam_root" 2>&1 &
+    bl_diag_start
     # The client exits 42 when it has updated itself and wants a fresh start (steam.sh does this).
     # BL_STEAM_UI=desktop = the client's desktop UI (a window, the library as a list), which the
     # desktop's launchers ask for. KDE owns its windows when BL_DESKTOP=1.
