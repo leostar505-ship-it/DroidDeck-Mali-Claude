@@ -174,12 +174,21 @@ bl_diag_start() {
   [ -n "${BL_SOFT_VK:-}" ] || return 0
   [ -z "${BL_DIAG_STARTED:-}" ] || return 0
   export BL_DIAG_STARTED=1
+  echo "== diag: bl_diag_start called: python3=$(command -v python3) debugdir=${BL_DEBUG_DIR:-unset} cdp=${BL_CDP_PORT:-unset}" >&2
   cat > /tmp/bl-diag.py <<'PYEOF'
 import base64, importlib.machinery, importlib.util, json, os, subprocess, sys, time, urllib.request
 out = os.environ.get("BL_DEBUG_DIR", "/tmp") + "/steam"
 os.makedirs(out, exist_ok=True)
+def w(line):
+    sys.stderr.write(line + "\n"); sys.stderr.flush()
+    try:
+        with open(out + "/diag-log.txt", "a") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
 def log(*a):
-    print("== diag:", *a, flush=True)
+    w("== diag: " + " ".join(str(x) for x in a))
+w("== diag: started pid %d at %s" % (os.getpid(), time.strftime("%H:%M:%S")))
 try:
     loader = importlib.machinery.SourceFileLoader("dd_agent", "/usr/local/bin/droiddeck-agent")
     spec = importlib.util.spec_from_loader("dd_agent", loader)
@@ -192,7 +201,7 @@ def sh(cmd, limit=3000):
         r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=20)
         log("$", cmd); 
         for line in (r.stdout + r.stderr).splitlines()[:60]:
-            print("==   " + line[:300], flush=True)
+            w("==   " + line[:300])
     except Exception as e:
         log("cmd failed", cmd, repr(e))
 def cdp(ws, mid, method, params=None, timeout=20):
@@ -230,7 +239,8 @@ for rnd in range(40):
                         shots += 1
                         log("screenshot", fn, len(raw), "bytes (a blank page is a few KB)")
                         if len(raw) < 70000 and shots <= 5:
-                            print("== diag-jpeg-base64 " + title.replace(" ", "_") + " " + data, flush=True)
+                            w("== diag-jpeg-base64 " + title.replace(" ", "_") + " " + data)
+                            open("%s/diag-shot-%02d.b64.txt" % (out, shots), "w").write(data)
                     else:
                         log("screenshot failed", json.dumps(r)[:300])
             finally:
