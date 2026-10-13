@@ -798,6 +798,23 @@ static int dmabuf_cpu_copy(struct surface *s, struct dmabuf_buffer *b) {
     if (!s->shm_img) s->shm_img = vkp_image_create_shm(b->width, b->height);
     if (!s->shm_img) WLOGE("cpu-copy: vkp_image_create_shm(%d,%d) failed", b->width, b->height);
     if (s->shm_img) vkp_image_upload_shm(s->shm_img, (const uint8_t *)m + b->offset[0], b->stride[0]);
+    {
+        static int g_probe;
+        if (g_probe < 6 || (g_probe % 120) == 0) {
+            const uint8_t *base = (const uint8_t *)m + b->offset[0];
+            long nz = 0, tot = 0, sum_a = 0;
+            for (int y = 0; y < b->height; y += 16)
+                for (int x = 0; x < b->width; x += 16) {
+                    const uint8_t *px = base + (size_t)y * b->stride[0] + (size_t)x * 4;
+                    tot++;
+                    if (px[0] | px[1] | px[2]) nz++;
+                    sum_a += px[3];
+                }
+            const uint8_t *c = base + (size_t)(b->height / 2) * b->stride[0] + (size_t)(b->width / 2) * 4;
+            WLOGE("cpu-copy probe #%d: %ld/%ld sampled pixels non-black, avg alpha %ld, centre %02x%02x%02x%02x", g_probe, nz, tot, tot ? sum_a / tot : 0, c[0], c[1], c[2], c[3]);
+        }
+        g_probe++;
+    }
     sy.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
     ioctl(b->fd[0], DMA_BUF_IOCTL_SYNC, &sy);
     munmap(m, len);
