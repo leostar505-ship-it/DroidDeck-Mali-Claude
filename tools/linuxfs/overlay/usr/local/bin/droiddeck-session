@@ -212,7 +212,7 @@ def cdp(ws, mid, method, params=None, timeout=20):
         if m.get("id") == mid:
             return m
     return {"error": "timeout"}
-import ctypes, struct, zlib
+import ctypes, struct, zlib, threading
 class XImage(ctypes.Structure):
     _fields_ = [("width", ctypes.c_int), ("height", ctypes.c_int), ("xoffset", ctypes.c_int), ("format", ctypes.c_int),
                 ("data", ctypes.c_void_p), ("byte_order", ctypes.c_int), ("bitmap_unit", ctypes.c_int),
@@ -271,10 +271,16 @@ def xgrab(disp, tag):
         x.XCloseDisplay(d)
     except Exception as e:
         log("xgrab failed", disp, repr(e))
-time.sleep(10)
+time.sleep(4)
 shots = 0
 for rnd in range(80):
     log("round", rnd, time.strftime("%H:%M:%S"))
+    for _d, _t in ((":0", "0"), (":1", "1")):
+        _th = threading.Thread(target=xgrab, args=(_d, _t), daemon=True)
+        log("xgrab start", _d)
+        _th.start(); _th.join(12)
+        if _th.is_alive():
+            log("xgrab", _d, "HUNG for 12 s (Xwayland not answering GetImage)")
     try:
         port = int(os.environ.get("BL_CDP_PORT", "0"))
         targets = json.load(urllib.request.urlopen("http://127.0.0.1:%d/json" % port, timeout=5))
@@ -306,14 +312,13 @@ for rnd in range(80):
                 ws.close()
     except Exception as e:
         log("cdp round failed", repr(e))
-    xgrab(":0", "0"); xgrab(":1", "1")
     if rnd % 2 == 1:
         sh("ps -eo pid,ppid,stat,etime,pcpu,rss,args | grep -E 'steam|gamescope|Xwayland|webhelper' | grep -v grep | cut -c1-260")
         sh("DISPLAY=:0 xwininfo -root -tree 2>&1 | head -50")
         sh("DISPLAY=:1 xwininfo -root -tree 2>&1 | head -30")
         sh("DISPLAY=:0 xprop -root 2>&1 | head -40")
         sh("for p in $(pgrep -f 'gamescope|steamwebhelper' | head -6); do echo pid $p; ls -l /proc/$p/fd 2>/dev/null | grep -E 'dmabuf|dma|drm|memfd|shm' | head -8; done")
-    time.sleep(8)
+    time.sleep(3)
 PYEOF
   python3 /tmp/bl-diag.py 2>&1 &
 }
