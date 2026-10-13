@@ -874,7 +874,7 @@ BUSCONF
     _bl_ui=(-gamepadui)
     [ "${BL_STEAM_UI:-}" = desktop ] && _bl_ui=()
     _bl_cef=(-cef-force-gpu -cef-use-gl=angle -cef-use-angle=vulkan)
-    [ -n "${BL_SOFT_VK:-}" ] && _bl_cef=(-cef-disable-gpu)
+    [ -n "${BL_SOFT_VK:-}" ] && _bl_cef=(-cef-force-gpu -cef-use-gl=angle -cef-use-angle=swiftshader)
     if [ "${BL_DESKTOP:-}" = 1 ] && [ "${BL_STEAM_UI:-}" = desktop ]; then
       # KDE uses QPainter/shm on Android. CEF's Vulkan buffers cannot be
       # presented there; its software path keeps the library and dialogs on KDE.
