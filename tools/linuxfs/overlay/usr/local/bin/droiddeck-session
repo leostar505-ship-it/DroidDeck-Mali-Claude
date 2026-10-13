@@ -141,7 +141,7 @@ if [ -n "${BL_VK_DRIVER:-}" ]; then
       break
     done
     if [ -n "$bl_soft" ]; then
-      export LIBGL_ALWAYS_SOFTWARE=1 LIBGL_KOPPER_DISABLE=true DISABLE_GAMESCOPE_WSI=1 BL_SEGV=1 BL_SOFT_VK=1 WAYLAND_DEBUG=1 VK_LOADER_DEBUG=error,warn,driver LIBGL_DEBUG=verbose EGL_LOG_LEVEL=debug MESA_DEBUG=1 MESA_LOG_LEVEL=debug LVP_DEBUG= ZINK_DEBUG= LP_DEBUG= XKB_LOG_LEVEL=debug
+      export LIBGL_ALWAYS_SOFTWARE=1 LIBGL_KOPPER_DISABLE=true DISABLE_GAMESCOPE_WSI=1 BL_SEGV=1 BL_SOFT_VK=1 VK_LOADER_DEBUG=error,warn,driver LIBGL_DEBUG=verbose EGL_LOG_LEVEL=debug MESA_DEBUG=1 MESA_LOG_LEVEL=debug LVP_DEBUG= ZINK_DEBUG= LP_DEBUG= XKB_LOG_LEVEL=debug
       echo "== software Vulkan driver (lavapipe): LIBGL_ALWAYS_SOFTWARE=1 LIBGL_KOPPER_DISABLE=true DISABLE_GAMESCOPE_WSI=1 BL_SEGV=1"
     fi
     unset bl_icd_dir bl_soft bl_llvm
@@ -212,6 +212,65 @@ def cdp(ws, mid, method, params=None, timeout=20):
         if m.get("id") == mid:
             return m
     return {"error": "timeout"}
+import ctypes, struct, zlib
+class XImage(ctypes.Structure):
+    _fields_ = [("width", ctypes.c_int), ("height", ctypes.c_int), ("xoffset", ctypes.c_int), ("format", ctypes.c_int),
+                ("data", ctypes.c_void_p), ("byte_order", ctypes.c_int), ("bitmap_unit", ctypes.c_int),
+                ("bitmap_bit_order", ctypes.c_int), ("bitmap_pad", ctypes.c_int), ("depth", ctypes.c_int),
+                ("bytes_per_line", ctypes.c_int), ("bits_per_pixel", ctypes.c_int)]
+def png_bytes(rows, wd, ht):
+    raw = b"".join(b"\x00" + r for r in rows)
+    def ch(t, d):
+        c = struct.pack(">I", len(d)) + t + d
+        return c + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    return b"\x89PNG\r\n\x1a\n" + ch(b"IHDR", struct.pack(">IIBBBBB", wd, ht, 8, 2, 0, 0, 0)) + ch(b"IDAT", zlib.compress(raw, 6)) + ch(b"IEND", b"")
+xgrabs = {}
+def xgrab(disp, tag):
+    try:
+        x = ctypes.CDLL("libX11.so.6")
+        x.XOpenDisplay.restype = ctypes.c_void_p
+        x.XOpenDisplay.argtypes = [ctypes.c_char_p]
+        x.XDefaultRootWindow.restype = ctypes.c_ulong
+        x.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+        x.XGetImage.restype = ctypes.POINTER(XImage)
+        x.XGetImage.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_int, ctypes.c_uint, ctypes.c_uint, ctypes.c_ulong, ctypes.c_int]
+        d = x.XOpenDisplay(disp.encode())
+        if not d:
+            log("xgrab", disp, "cannot open display"); return
+        root = x.XDefaultRootWindow(d)
+        scr = ctypes.c_int.in_dll(x, "_Xdebug") if False else None
+        wd, ht = 1606, 720
+        im = x.XGetImage(d, root, 0, 0, wd, ht, 0xffffffff, 2)
+        if not im:
+            log("xgrab", disp, "XGetImage returned NULL"); x.XCloseDisplay(d); return
+        i = im.contents
+        bpl, bpp = i.bytes_per_line, i.bits_per_pixel
+        buf = ctypes.string_at(i.data, bpl * i.height)
+        nonblack = 0; total = 0; minx = miny = 10**9; maxx = maxy = -1
+        rows = []
+        for yy in range(0, i.height, 4):
+            row = bytearray()
+            for xx in range(0, i.width, 4):
+                o = yy * bpl + xx * (bpp // 8)
+                b, g, r = buf[o], buf[o + 1], buf[o + 2]
+                total += 1
+                if b or g or r:
+                    nonblack += 1
+                    minx = min(minx, xx); maxx = max(maxx, xx); miny = min(miny, yy); maxy = max(maxy, yy)
+                row += bytes((r, g, b))
+            rows.append(bytes(row))
+        log("xgrab", disp, "%dx%d depth %d bpp %d: %d/%d sampled pixels non-black, bbox x%d-%d y%d-%d" % (i.width, i.height, i.depth, bpp, nonblack, total, minx, maxx, miny, maxy))
+        xgrabs[tag] = xgrabs.get(tag, 0) + 1
+        if xgrabs[tag] <= 4 or nonblack:
+            png = png_bytes(rows, len(rows[0]) // 3, len(rows))
+            fn = "%s/diag-x%s-%02d.png" % (out, tag, xgrabs[tag])
+            open(fn, "wb").write(png)
+            if len(png) < 60000:
+                open(fn + ".b64.txt", "w").write(base64.b64encode(png).decode())
+            log("xgrab saved", fn, len(png), "bytes")
+        x.XCloseDisplay(d)
+    except Exception as e:
+        log("xgrab failed", disp, repr(e))
 time.sleep(10)
 shots = 0
 for rnd in range(80):
@@ -247,6 +306,7 @@ for rnd in range(80):
                 ws.close()
     except Exception as e:
         log("cdp round failed", repr(e))
+    xgrab(":0", "0"); xgrab(":1", "1")
     if rnd % 2 == 1:
         sh("ps -eo pid,ppid,stat,etime,pcpu,rss,args | grep -E 'steam|gamescope|Xwayland|webhelper' | grep -v grep | cut -c1-260")
         sh("DISPLAY=:0 xwininfo -root -tree 2>&1 | head -50")
